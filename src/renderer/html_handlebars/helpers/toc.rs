@@ -3,10 +3,6 @@ use std::{cmp::Ordering, collections::BTreeMap};
 
 use crate::utils::special_escape;
 
-use handlebars::{
-    Context, Handlebars, Helper, HelperDef, Output, RenderContext, RenderError, RenderErrorReason,
-};
-
 // Handlebars helper to construct TOC
 #[derive(Clone, Copy)]
 pub struct RenderToc {
@@ -17,7 +13,6 @@ impl HelperDef for RenderToc {
     fn call<'reg: 'rc, 'rc>(
         &self,
         _h: &Helper<'rc>,
-        _r: &'reg Handlebars<'_>,
         ctx: &'rc Context,
         rc: &mut RenderContext<'reg, 'rc>,
         out: &mut dyn Output,

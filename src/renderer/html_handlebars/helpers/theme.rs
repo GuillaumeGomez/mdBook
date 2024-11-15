@@ -1,11 +1,7 @@
-use handlebars::{
-    Context, Handlebars, Helper, Output, RenderContext, RenderError, RenderErrorReason,
-};
 use log::trace;
 
 pub fn theme_option(
     h: &Helper<'_>,
-    _r: &Handlebars<'_>,
     ctx: &Context,
     rc: &mut RenderContext<'_, '_>,
     out: &mut dyn Output,

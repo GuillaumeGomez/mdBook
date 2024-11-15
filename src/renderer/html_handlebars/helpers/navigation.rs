@@ -1,10 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use handlebars::{
-    Context, Handlebars, Helper, Output, RenderContext, RenderError, RenderErrorReason, Renderable,
-};
-
 use crate::utils;
 use log::{debug, trace};
 use serde_json::json;
@@ -114,7 +110,6 @@ fn find_chapter(
 
 fn render(
     _h: &Helper<'_>,
-    r: &Handlebars<'_>,
     ctx: &Context,
     rc: &mut RenderContext<'_, '_>,
     out: &mut dyn Output,
@@ -171,7 +166,6 @@ fn render(
 
 pub fn previous(
     _h: &Helper<'_>,
-    r: &Handlebars<'_>,
     ctx: &Context,
     rc: &mut RenderContext<'_, '_>,
     out: &mut dyn Output,

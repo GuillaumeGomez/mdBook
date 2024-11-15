@@ -5,6 +5,7 @@ use crate::renderer::html_handlebars::helpers;
 use crate::renderer::{RenderContext, Renderer};
 use crate::theme::{self, playground_editor, Theme};
 use crate::utils;
+use crate::utils::fs::get_404_output_file;
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -12,12 +13,27 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 
-use crate::utils::fs::get_404_output_file;
-use handlebars::Handlebars;
 use log::{debug, trace, warn};
 use once_cell::sync::Lazy;
 use regex::{Captures, Regex};
+use rinja::Template;
 use serde_json::json;
+
+#[derive(Template)]
+#[template(path = "index.html")]
+struct Index;
+
+#[derive(Template)]
+#[template(path = "redirect.html")]
+struct Redirect;
+
+#[derive(Template)]
+#[template(path = "toc.html")]
+struct Toc;
+
+#[derive(Template)]
+#[template(path = "toc.js")]
+struct TocJS;
 
 #[derive(Default)]
 pub struct HtmlHandlebars;
@@ -110,7 +126,7 @@ impl HtmlHandlebars {
 
         // Render the handlebars template with the data
         debug!("Render template");
-        let rendered = ctx.handlebars.render("index", &ctx.data)?;
+        let rendered = Index.render()?;
 
         let rendered = self.post_process(
             rendered,
@@ -127,7 +143,7 @@ impl HtmlHandlebars {
             ctx.data.insert("path".to_owned(), json!("index.md"));
             ctx.data.insert("path_to_root".to_owned(), json!(""));
             ctx.data.insert("is_index".to_owned(), json!(true));
-            let rendered_index = ctx.handlebars.render("index", &ctx.data)?;
+            let rendered_index = Index.render()?;
             let rendered_index = self.post_process(
                 rendered_index,
                 &ctx.html_config.playground,
@@ -146,7 +162,6 @@ impl HtmlHandlebars {
         ctx: &RenderContext,
         html_config: &HtmlConfig,
         src_dir: &Path,
-        handlebars: &mut Handlebars<'_>,
         data: &mut serde_json::Map<String, serde_json::Value>,
     ) -> Result<()> {
         let destination = &ctx.destination;
@@ -192,7 +207,7 @@ impl HtmlHandlebars {
             title.push_str(book_title);
         }
         data_404.insert("title".to_owned(), json!(title));
-        let rendered = handlebars.render("index", &data_404)?;
+        let rendered = Index.render()?;
 
         let rendered = self.post_process(
             rendered,
@@ -368,19 +383,6 @@ impl HtmlHandlebars {
         );
     }
 
-    fn register_hbs_helpers(&self, handlebars: &mut Handlebars<'_>, html_config: &HtmlConfig) {
-        handlebars.register_helper(
-            "toc",
-            Box::new(helpers::toc::RenderToc {
-                no_section_label: html_config.no_section_label,
-            }),
-        );
-        handlebars.register_helper("previous", Box::new(helpers::navigation::previous));
-        handlebars.register_helper("next", Box::new(helpers::navigation::next));
-        // TODO: remove theme_option in 0.5, it is not needed.
-        handlebars.register_helper("theme_option", Box::new(helpers::theme::theme_option));
-    }
-
     /// Copy across any additional CSS and JavaScript files which the book
     /// has been configured to use.
     fn copy_additional_css_and_js(
@@ -421,7 +423,6 @@ impl HtmlHandlebars {
     fn emit_redirects(
         &self,
         root: &Path,
-        handlebars: &Handlebars<'_>,
         redirects: &HashMap<String, String>,
     ) -> Result<()> {
         if redirects.is_empty() {
@@ -437,7 +438,7 @@ impl HtmlHandlebars {
             // up `root.join(original)`).
             let original = original.trim_start_matches('/');
             let filename = root.join(original);
-            self.emit_redirect(handlebars, &filename, new)?;
+            self.emit_redirect(&filename, new)?;
         }
 
         Ok(())
@@ -445,7 +446,6 @@ impl HtmlHandlebars {
 
     fn emit_redirect(
         &self,
-        handlebars: &Handlebars<'_>,
         original: &Path,
         destination: &str,
     ) -> Result<()> {
@@ -468,8 +468,7 @@ impl HtmlHandlebars {
             "url": destination,
         });
         let f = File::create(original)?;
-        handlebars
-            .render_to_write("redirect", &ctx, f)
+        Redirect.write_into(f)
             .with_context(|| {
                 format!(
                     "Unable to create a redirect file at \"{}\"",
@@ -500,8 +499,6 @@ impl Renderer for HtmlHandlebars {
         }
 
         trace!("render");
-        let mut handlebars = Handlebars::new();
-
         let theme_dir = match html_config.theme {
             Some(ref theme) => {
                 let dir = ctx.root.join(theme);
@@ -515,27 +512,6 @@ impl Renderer for HtmlHandlebars {
 
         let theme = theme::Theme::new(theme_dir);
 
-        debug!("Register the index handlebars template");
-        handlebars.register_template_string("index", String::from_utf8(theme.index.clone())?)?;
-
-        debug!("Register the head handlebars template");
-        handlebars.register_partial("head", String::from_utf8(theme.head.clone())?)?;
-
-        debug!("Register the redirect handlebars template");
-        handlebars
-            .register_template_string("redirect", String::from_utf8(theme.redirect.clone())?)?;
-
-        debug!("Register the header handlebars template");
-        handlebars.register_partial("header", String::from_utf8(theme.header.clone())?)?;
-
-        debug!("Register the toc handlebars template");
-        handlebars.register_template_string("toc_js", String::from_utf8(theme.toc_js.clone())?)?;
-        handlebars
-            .register_template_string("toc_html", String::from_utf8(theme.toc_html.clone())?)?;
-
-        debug!("Register handlebars helpers");
-        self.register_hbs_helpers(&mut handlebars, &html_config);
-
         let mut data = make_data(&ctx.root, book, &ctx.config, &html_config, &theme)?;
 
         // Print version
@@ -547,7 +523,6 @@ impl Renderer for HtmlHandlebars {
         let mut is_index = true;
         for item in book.iter() {
             let ctx = RenderItemContext {
-                handlebars: &handlebars,
                 destination: destination.to_path_buf(),
                 data: data.clone(),
                 is_index,
@@ -563,7 +538,7 @@ impl Renderer for HtmlHandlebars {
 
         // Render 404 page
         if html_config.input_404 != Some("".to_string()) {
-            self.render_404(ctx, &html_config, &src_dir, &mut handlebars, &mut data)?;
+            self.render_404(ctx, &html_config, &src_dir, &mut data)?;
         }
 
         // Print version
@@ -575,7 +550,7 @@ impl Renderer for HtmlHandlebars {
         // Render the handlebars template with the data
         if html_config.print.enable {
             debug!("Render template");
-            let rendered = handlebars.render("index", &data)?;
+            let rendered = Index.render()?;
 
             let rendered = self.post_process(
                 rendered,
@@ -590,11 +565,11 @@ impl Renderer for HtmlHandlebars {
 
         debug!("Render toc");
         {
-            let rendered_toc = handlebars.render("toc_js", &data)?;
+            let rendered_toc = TocJS.render()?;
             utils::fs::write_file(destination, "toc.js", rendered_toc.as_bytes())?;
             debug!("Creating toc.js ✓");
             data.insert("is_toc_html".to_owned(), json!(true));
-            let rendered_toc = handlebars.render("toc_html", &data)?;
+            let rendered_toc = Toc.render()?;
             utils::fs::write_file(destination, "toc.html", rendered_toc.as_bytes())?;
             debug!("Creating toc.html ✓");
             data.remove("is_toc_html");
@@ -615,7 +590,7 @@ impl Renderer for HtmlHandlebars {
             }
         }
 
-        self.emit_redirects(&ctx.destination, &handlebars, &html_config.redirect)
+        self.emit_redirects(&ctx.destination, &html_config.redirect)
             .context("Unable to emit redirects")?;
 
         // Copy all remaining files, avoid a recursive copy from/to the book build dir
@@ -1063,7 +1038,6 @@ fn partition_source(s: &str) -> (String, String) {
 }
 
 struct RenderItemContext<'a> {
-    handlebars: &'a Handlebars<'a>,
     destination: PathBuf,
     data: serde_json::Map<String, serde_json::Value>,
     is_index: bool,
